@@ -67,7 +67,24 @@ fn dispatch(cli: Cli) -> Result<u8, String> {
                 }
             }
 
+            if let Some(m) = min_macro_f1 {
+                if !m.is_finite() || !(0.0..=1.0).contains(&m) {
+                    return Err(format!("--min-macro-f1 must be within [0.0, 1.0], got {m}"));
+                }
+                if test_split == 0.0 {
+                    return Err(
+                        "--min-macro-f1 requires a held-out test split (--test-split > 0.0)"
+                            .to_string(),
+                    );
+                }
+            }
             let model = train_model(&docs, ngrams, max_features, min_df, test_split, epochs, l2, seed)?;
+            if min_macro_f1.is_some() && model.eval.is_in_sample {
+                return Err(
+                    "--min-macro-f1 cannot pass on an in-sample fallback split (need >=2 rows in at least one class)"
+                        .to_string(),
+                );
+            }
             if let Some(parent) = out.parent()
                 && !parent.as_os_str().is_empty()
             {
@@ -175,13 +192,47 @@ fn dispatch(cli: Cli) -> Result<u8, String> {
             let elapsed_us = t0.elapsed().as_micros();
 
             if let Some(out_path) = &out {
-                let mut buf = String::new();
-                for p in &preds {
-                    buf.push_str(&serde_json::to_string(p).unwrap());
-                    buf.push('\n');
+                if let Some(parent) = out_path.parent()
+                    && !parent.as_os_str().is_empty()
+                {
+                    fs::create_dir_all(parent)
+                        .map_err(|e| format!("failed creating dir: {e}"))?;
                 }
-                fs::write(out_path, buf)
-                    .map_err(|e| format!("failed writing {}: {e}", out_path.display()))?;
+                let is_csv = out_path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .is_some_and(|e| e.eq_ignore_ascii_case("csv"));
+                if is_csv {
+                    let mut wtr = csv::Writer::from_path(out_path)
+                        .map_err(|e| format!("failed creating CSV {}: {e}", out_path.display()))?;
+                    wtr.write_record(["id", "predicted_label", "confidence", "top_phrases"])
+                        .map_err(|e| format!("CSV header error: {e}"))?;
+                    for (idx, p) in preds.iter().enumerate() {
+                        let id_s = p.id.clone().unwrap_or_else(|| format!("{idx}"));
+                        let ph = p
+                            .top_phrases
+                            .iter()
+                            .map(|d| format!("{} ({:+.4})", d.phrase, d.contribution))
+                            .collect::<Vec<_>>()
+                            .join(" | ");
+                        wtr.write_record([
+                            id_s,
+                            p.predicted_label.clone(),
+                            format!("{:.4}", p.confidence),
+                            ph,
+                        ])
+                        .map_err(|e| format!("CSV write error: {e}"))?;
+                    }
+                    wtr.flush().map_err(|e| format!("CSV flush error: {e}"))?;
+                } else {
+                    let mut buf = String::new();
+                    for p in &preds {
+                        buf.push_str(&serde_json::to_string(p).unwrap());
+                        buf.push('\n');
+                    }
+                    fs::write(out_path, buf)
+                        .map_err(|e| format!("failed writing {}: {e}", out_path.display()))?;
+                }
                 eprintln!("wrote {} classifications -> {}", preds.len(), out_path.display());
             }
 

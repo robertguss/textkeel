@@ -41,6 +41,8 @@ pub struct ClassMetric {
 pub struct EvalMetrics {
     pub n_train: usize,
     pub n_test: usize,
+    #[serde(default)]
+    pub is_in_sample: bool,
     pub accuracy: f64,
     pub macro_f1: f64,
     pub weighted_f1: f64,
@@ -99,7 +101,7 @@ pub fn extract_ngrams(text: &str, ngram_max: usize) -> Vec<String> {
             }
         } else if !cur.is_empty() {
             let trimmed = cur.trim_matches('\'');
-            if trimmed.len() >= 2 && !stop.contains(trimmed) {
+            if trimmed.chars().count() >= 2 && !stop.contains(trimmed) {
                 words.push(trimmed.to_string());
             }
             cur.clear();
@@ -107,7 +109,7 @@ pub fn extract_ngrams(text: &str, ngram_max: usize) -> Vec<String> {
     }
     if !cur.is_empty() {
         let trimmed = cur.trim_matches('\'');
-        if trimmed.len() >= 2 && !stop.contains(trimmed) {
+        if trimmed.chars().count() >= 2 && !stop.contains(trimmed) {
             words.push(trimmed.to_string());
         }
     }
@@ -192,6 +194,17 @@ pub fn train_model(
     if docs.len() < 4 {
         return Err(format!("need at least 4 labeled documents to train, got {}", docs.len()));
     }
+    if ngram_max == 0 {
+        return Err("--ngrams must be >= 1".to_string());
+    }
+    if !l2.is_finite() || l2 < 0.0 {
+        return Err(format!("--l2 must be finite and >= 0.0, got {l2}"));
+    }
+    if !test_split.is_finite() || !(0.0..=0.5).contains(&test_split) {
+        return Err(format!(
+            "--test-split must be finite and within [0.0, 0.5], got {test_split}"
+        ));
+    }
 
     // Collect sorted class names
     let mut class_set: BTreeMap<String, Vec<usize>> = BTreeMap::new();
@@ -223,9 +236,11 @@ pub fn train_model(
         test_idx.extend_from_slice(&indices[..n_test]);
         train_idx.extend_from_slice(&indices[n_test..]);
     }
+    let mut is_in_sample = false;
     if test_idx.is_empty() {
-        // Fallback: evaluate on train set if split == 0.0
+        // Fallback: evaluate on train set if split == 0.0 (explicitly flagged in eval.is_in_sample)
         test_idx = train_idx.clone();
+        is_in_sample = true;
     }
 
     // Build TF-IDF vocabulary strictly from training documents (zero leakage!)
@@ -373,7 +388,7 @@ pub fn train_model(
         let pred = logits
             .iter()
             .enumerate()
-            .max_by(|a, b| a.1.total_cmp(b.1))
+            .max_by(|a, b| a.1.total_cmp(b.1).then_with(|| b.0.cmp(&a.0)))
             .map(|(i, _)| i)
             .unwrap_or(0);
         if pred == *y {
@@ -407,10 +422,12 @@ pub fn train_model(
         } else {
             0.0
         };
-        if support[c] > 0 {
+        if support[c] > 0 || fp[c] > 0 {
             macro_f1_sum += f1;
-            weighted_f1_sum += f1 * (support[c] as f64);
             active_classes += 1;
+        }
+        if support[c] > 0 {
+            weighted_f1_sum += f1 * (support[c] as f64);
         }
         per_class.push(ClassMetric {
             label: classes[c].clone(),
@@ -424,6 +441,7 @@ pub fn train_model(
     let eval = EvalMetrics {
         n_train: train_vecs.len(),
         n_test: test_vecs.len(),
+        is_in_sample,
         accuracy: r4((correct as f64) / n_test_f),
         macro_f1: r4(macro_f1_sum / (active_classes.max(1) as f64)),
         weighted_f1: r4(weighted_f1_sum / n_test_f),
@@ -472,7 +490,61 @@ impl TextKeelModel {
     pub fn from_file(path: &Path) -> Result<Self, String> {
         let raw = fs::read_to_string(path)
             .map_err(|e| format!("failed to read model {}: {e}", path.display()))?;
-        serde_json::from_str(&raw).map_err(|e| format!("failed parsing textkeel model: {e}"))
+        let model: Self =
+            serde_json::from_str(&raw).map_err(|e| format!("failed parsing textkeel model: {e}"))?;
+        model.validate()?;
+        Ok(model)
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        if self.classes.is_empty() {
+            return Err("invalid textkeel model: `classes` must not be empty".to_string());
+        }
+        if self.ngram_max == 0 {
+            return Err("invalid textkeel model: `ngram_max` must be >= 1".to_string());
+        }
+        if self.idf.len() != self.vocab.len() {
+            return Err(format!(
+                "invalid textkeel model: idf.len() ({}) != vocab.len() ({})",
+                self.idf.len(),
+                self.vocab.len()
+            ));
+        }
+        if self.idf.iter().any(|v| !v.is_finite()) {
+            return Err("invalid textkeel model: non-finite values in `idf`".to_string());
+        }
+        if self.bias.len() != self.classes.len() {
+            return Err(format!(
+                "invalid textkeel model: bias.len() ({}) != classes.len() ({})",
+                self.bias.len(),
+                self.classes.len()
+            ));
+        }
+        if self.bias.iter().any(|v| !v.is_finite()) {
+            return Err("invalid textkeel model: non-finite values in `bias`".to_string());
+        }
+        if self.weights.len() != self.classes.len() {
+            return Err(format!(
+                "invalid textkeel model: weights.len() ({}) != classes.len() ({})",
+                self.weights.len(),
+                self.classes.len()
+            ));
+        }
+        for (c, row) in self.weights.iter().enumerate() {
+            if row.len() != self.vocab.len() {
+                return Err(format!(
+                    "invalid textkeel model: weights[{c}].len() ({}) != vocab.len() ({})",
+                    row.len(),
+                    self.vocab.len()
+                ));
+            }
+            if row.iter().any(|v| !v.is_finite()) {
+                return Err(format!(
+                    "invalid textkeel model: non-finite value in weights[{c}]"
+                ));
+            }
+        }
+        Ok(())
     }
 
     pub fn predict(&self, text: &str, id: Option<String>, top_phrases: usize) -> Prediction {
@@ -491,10 +563,11 @@ impl TextKeelModel {
             }
         }
         let probs = softmax(&logits);
+        // First-index wins on ties (matches browser JS `if (probs[c] > probs[best])`)
         let pred_idx = probs
             .iter()
             .enumerate()
-            .max_by(|a, b| a.1.total_cmp(b.1))
+            .max_by(|a, b| a.1.total_cmp(b.1).then_with(|| b.0.cmp(&a.0)))
             .map(|(i, _)| i)
             .unwrap_or(0);
 
@@ -509,7 +582,7 @@ impl TextKeelModel {
                 phrase: self.vocab[fi].clone(),
                 contribution: r4(self.weights[pred_idx][fi] * xv),
             })
-            .filter(|d| d.contribution.abs() > 1e-4)
+            .filter(|d| d.contribution > 1e-4)
             .collect();
         drivers.sort_by(|a, b| b.contribution.total_cmp(&a.contribution));
         drivers.truncate(top_phrases);

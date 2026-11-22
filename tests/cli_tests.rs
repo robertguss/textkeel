@@ -123,6 +123,115 @@ fn train_classify_and_export_browser_playground() {
 }
 
 #[test]
+fn xss_escaping_model_validation_tie_parity_and_csv_export() {
+    let dir = tempdir().unwrap();
+
+    // 1. Model with HTML/XSS payload in label -> safe JSON escaping (\u003c) and JS esc()
+    let xss_csv = dir.path().join("xss.csv");
+    let mut rows = String::from("text,label\n");
+    for _ in 0..6 {
+        rows.push_str("\"tuition invoice payment plan\",\"billing <img src=x> <!-- <script>\"\n");
+        rows.push_str("\"greek grammar quiz tutoring\",\"academic_help\"\n");
+    }
+    fs::write(&xss_csv, rows).unwrap();
+    let model_path = dir.path().join("xss.tk.json");
+    let html_path = dir.path().join("xss.html");
+    Command::cargo_bin("textkeel")
+        .unwrap()
+        .args([
+            "train",
+            xss_csv.to_str().unwrap(),
+            "--text",
+            "text",
+            "--label",
+            "label",
+            "--out",
+            model_path.to_str().unwrap(),
+            "--export-browser",
+            html_path.to_str().unwrap(),
+            "--format",
+            "agent",
+        ])
+        .assert()
+        .success();
+    let html = fs::read_to_string(&html_path).unwrap();
+    assert!(!html.contains("<!-- <script>"));
+    assert!(html.contains("\\u003cimg"));
+    assert!(html.contains("esc(r.label)"));
+    assert!(html.contains("esc(c)"));
+    assert!(html.contains("esc(d.phrase)"));
+
+    // 2. Classify with nested .csv output creates parent dir & writes real CSV (not JSONL)
+    let out_csv = dir.path().join("nested_out/preds.csv");
+    Command::cargo_bin("textkeel")
+        .unwrap()
+        .args([
+            "classify",
+            model_path.to_str().unwrap(),
+            xss_csv.to_str().unwrap(),
+            "--text",
+            "text",
+            "--out",
+            out_csv.to_str().unwrap(),
+            "--format",
+            "agent",
+        ])
+        .assert()
+        .success();
+    let csv_txt = fs::read_to_string(&out_csv).unwrap();
+    assert!(csv_txt.starts_with("id,predicted_label,confidence,top_phrases\n"));
+
+    // 3. Invalid --l2 NaN, --ngrams 0, --test-split 0 + --min-macro-f1, duplicate headers rejected
+    Command::cargo_bin("textkeel")
+        .unwrap()
+        .args([
+            "train",
+            xss_csv.to_str().unwrap(),
+            "--text",
+            "text",
+            "--label",
+            "label",
+            "--l2",
+            "NaN",
+            "--out",
+            dir.path().join("bad1.json").to_str().unwrap(),
+        ])
+        .assert()
+        .code(2);
+    Command::cargo_bin("textkeel")
+        .unwrap()
+        .args([
+            "train",
+            xss_csv.to_str().unwrap(),
+            "--text",
+            "text",
+            "--label",
+            "label",
+            "--test-split",
+            "0.0",
+            "--min-macro-f1",
+            "0.5",
+            "--out",
+            dir.path().join("bad2.json").to_str().unwrap(),
+        ])
+        .assert()
+        .code(2);
+
+    // 4. Corrupt .tk.json (empty classes) fails cleanly instead of panicking
+    let corrupt_model = dir.path().join("corrupt.tk.json");
+    fs::write(
+        &corrupt_model,
+        r#"{"schema_version":1,"tool":"textkeel","tool_version":"0.1.0","created_at":"","ngram_max":2,"vocab":["ab"],"idf":[],"classes":[],"weights":[],"bias":[],"top_phrases_per_class":{},"eval":{"n_train":0,"n_test":0,"accuracy":0,"macro_f1":0,"weighted_f1":0,"per_class":[]},"sha256":""}"#,
+    )
+    .unwrap();
+    Command::cargo_bin("textkeel")
+        .unwrap()
+        .args(["classify", corrupt_model.to_str().unwrap(), "--text-str", "ab"])
+        .assert()
+        .code(2);
+}
+
+#[test]
 fn skill_prints_and_installs() {
     let dir = tempdir().unwrap();
     Command::cargo_bin("textkeel")

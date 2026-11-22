@@ -7,13 +7,19 @@ fn esc(s: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
+        .replace('\'', "&#39;")
 }
 
 pub fn render_browser_playground(model: &TextKeelModel, title: &str) -> String {
-    // Prevent accidental `</script>` closing in embedded JSON
+    // Fully escape `<`, `>`, `&`, U+2028, U+2029 so embedded JSON can never break out
+    // of `<script>` (including HTML5 `<!-- <script>` double-escaped state).
     let model_json = serde_json::to_string(model)
         .unwrap_or_else(|_| "{}".to_string())
-        .replace("</", "<\\/");
+        .replace('<', "\\u003c")
+        .replace('>', "\\u003e")
+        .replace('&', "\\u0026")
+        .replace('\u{2028}', "\\u2028")
+        .replace('\u{2029}', "\\u2029");
 
     let class_rows: String = model
         .eval
@@ -102,9 +108,9 @@ const STOP = new Set(["the","and","for","that","with","this","from","have","been
 const VOCAB_IDX = new Map(MODEL.vocab.map((t, i) => [t, i]));
 
 function extractNgrams(text, maxN) {{
-  const words = (text.toLowerCase().match(/[a-z0-9']+/g) || [])
+  const words = (text.toLowerCase().match(/[\p{{L}}\p{{N}}']+/gu) || [])
     .map(w => w.replace(/^'+|'+$/g, ''))
-    .filter(w => w.length >= 2 && !STOP.has(w));
+    .filter(w => [...w].length >= 2 && !STOP.has(w));
   const out = [...words];
   for (let n = 2; n <= Math.min(maxN, 3); n++) {{
     for (let i = 0; i + n <= words.length; i++) {{
@@ -116,7 +122,7 @@ function extractNgrams(text, maxN) {{
 
 function classify(text) {{
   const t0 = performance.now();
-  const terms = extractNgrams(text, MODEL.ngram_max || 2);
+  const terms = extractNgrams(text, MODEL.ngram_max ?? 2);
   const tf = new Map();
   for (const t of terms) {{
     const idx = VOCAB_IDX.get(t);
@@ -129,8 +135,10 @@ function classify(text) {{
     vec.push([idx, v]);
     normSq += v * v;
   }}
-  const norm = Math.sqrt(normSq) || 1;
-  for (const item of vec) item[1] /= norm;
+  const norm = Math.sqrt(normSq);
+  if (norm > 1e-12) {{
+    for (const item of vec) item[1] /= norm;
+  }}
 
   const logits = MODEL.bias.slice();
   for (const [idx, val] of vec) {{
@@ -140,20 +148,26 @@ function classify(text) {{
   }}
   const maxL = Math.max(...logits);
   const exps = logits.map(z => Math.exp(z - maxL));
-  const sumE = exps.reduce((a, b) => a + b, 0) || 1;
+  const sumE = Math.max(exps.reduce((a, b) => a + b, 0), 1e-12);
   const probs = exps.map(e => e / sumE);
   let best = 0;
   for (let c = 1; c < probs.length; c++) if (probs[c] > probs[best]) best = c;
 
   const drivers = vec
     .map(([idx, val]) => ({{ phrase: MODEL.vocab[idx], contrib: MODEL.weights[best][idx] * val }}))
-    .filter(d => d.contrib > 0.001)
+    .filter(d => d.contrib > 1e-4)
     .sort((a, b) => b.contrib - a.contrib)
     .slice(0, 6);
 
   return {{ label: MODEL.classes[best], confidence: probs[best], probs, drivers, ms: performance.now() - t0 }};
 }}
 
+const esc = s => String(s)
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#39;');
 const ta = document.getElementById('inputText');
 const resEl = document.getElementById('result');
 function render() {{
@@ -162,10 +176,10 @@ function render() {{
   const r = classify(txt);
   const order = MODEL.classes.map((c, i) => [c, r.probs[i]]).sort((a, b) => b[1] - a[1]);
   const bars = order.map(([c, p]) =>
-    `<div class="bar-row"><div>${{c}}</div><div class="bar-track"><div class="bar-fill" style="width:${{(p*100).toFixed(1)}}%"></div></div><div class="bar-val">${{(p*100).toFixed(1)}}%</div></div>`
+    `<div class="bar-row"><div>${{esc(c)}}</div><div class="bar-track"><div class="bar-fill" style="width:${{(p*100).toFixed(1)}}%"></div></div><div class="bar-val">${{(p*100).toFixed(1)}}%</div></div>`
   ).join('');
-  const drv = r.drivers.map(d => `<span class="tag">${{d.phrase}} (+${{d.contrib.toFixed(2)}})</span>`).join(' ');
-  resEl.innerHTML = `<div style="margin-bottom:10px">Predicted: <strong>${{r.label}}</strong> (${{(r.confidence*100).toFixed(1)}}% confidence · ${{r.ms.toFixed(2)}} ms)</div>${{bars}}<div style="margin-top:8px"><span class="sub">Key phrase drivers:</span> ${{drv || '<span class="sub">none</span>'}}</div>`;
+  const drv = r.drivers.map(d => `<span class="tag">${{esc(d.phrase)}} (+${{d.contrib.toFixed(2)}})</span>`).join(' ');
+  resEl.innerHTML = `<div style="margin-bottom:10px">Predicted: <strong>${{esc(r.label)}}</strong> (${{(r.confidence*100).toFixed(1)}}% confidence · ${{r.ms.toFixed(2)}} ms)</div>${{bars}}<div style="margin-top:8px"><span class="sub">Key phrase drivers:</span> ${{drv || '<span class="sub">none</span>'}}</div>`;
 }}
 ta.addEventListener('input', render);
 render();
