@@ -51,10 +51,8 @@ fn read_delimited(path: &Path, delim: u8) -> Result<DataTable, String> {
         .iter()
         .map(|s| s.to_string())
         .collect();
-    let mut columns: IndexMap<String, Vec<Option<String>>> = headers
-        .iter()
-        .map(|h| (h.clone(), Vec::new()))
-        .collect();
+    let mut columns: IndexMap<String, Vec<Option<String>>> =
+        headers.iter().map(|h| (h.clone(), Vec::new())).collect();
     if columns.len() != headers.len() {
         return Err(format!(
             "duplicate column header detected in {}",
@@ -152,8 +150,7 @@ fn rows_to_table(
 }
 
 fn read_parquet(path: &Path) -> Result<DataTable, String> {
-    let file =
-        File::open(path).map_err(|e| format!("failed to open {}: {e}", path.display()))?;
+    let file = File::open(path).map_err(|e| format!("failed to open {}: {e}", path.display()))?;
     let builder = ParquetRecordBatchReaderBuilder::try_new(file)
         .map_err(|e| format!("failed to read parquet header: {e}"))?;
     let schema = builder.schema().clone();
@@ -180,8 +177,7 @@ fn read_parquet(path: &Path) -> Result<DataTable, String> {
     let mut row_count = 0usize;
 
     for batch_res in reader {
-        let batch: RecordBatch =
-            batch_res.map_err(|e| format!("parquet batch read error: {e}"))?;
+        let batch: RecordBatch = batch_res.map_err(|e| format!("parquet batch read error: {e}"))?;
         let b_schema = batch.schema();
         let n = batch.num_rows();
         for (col_idx, field) in b_schema.fields().iter().enumerate() {

@@ -1,13 +1,13 @@
 [build-system]
-requires = ["maturin>=1.7,<2.0"]
+requires = ["maturin>=1.10,<2.0"]
 build-backend = "maturin"
 
 [project]
 name = "textkeel"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Zero-Python, zero-PII local Rust TF-IDF + Multinomial Logistic text classifier with phrase attribution & offline browser playground export."
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 license = { text = "MIT OR Apache-2.0" }
 authors = [{ name = "Robert Guss" }]
 keywords = ["nlp", "tfidf", "text-classification", "ml", "cli", "keel"]
@@ -29,4 +29,5 @@ Issues = "https://github.com/robertguss/textkeel/issues"
 
 [tool.maturin]
 bindings = "bin"
+compatibility = "pypi"
 strip = true

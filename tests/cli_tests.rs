@@ -98,7 +98,11 @@ fn train_classify_and_export_browser_playground() {
     let train_json: serde_json::Value = serde_json::from_slice(&train_out).unwrap();
     assert_eq!(train_json["gate_passed"], true);
     assert!(train_json["eval"]["macro_f1"].as_f64().unwrap() >= 0.85);
-    assert!(fs::read_to_string(&html_path).unwrap().contains("const MODEL ="));
+    assert!(
+        fs::read_to_string(&html_path)
+            .unwrap()
+            .contains("const MODEL =")
+    );
 
     // Classify an unseen text locally
     let cls_out = Command::cargo_bin("textkeel")
@@ -226,7 +230,12 @@ fn xss_escaping_model_validation_tie_parity_and_csv_export() {
     .unwrap();
     Command::cargo_bin("textkeel")
         .unwrap()
-        .args(["classify", corrupt_model.to_str().unwrap(), "--text-str", "ab"])
+        .args([
+            "classify",
+            corrupt_model.to_str().unwrap(),
+            "--text-str",
+            "ab",
+        ])
         .assert()
         .code(2);
 }
@@ -236,7 +245,13 @@ fn skill_prints_and_installs() {
     let dir = tempdir().unwrap();
     Command::cargo_bin("textkeel")
         .unwrap()
-        .args(["skill", "--install", dir.path().to_str().unwrap(), "--format", "human"])
+        .args([
+            "skill",
+            "--install",
+            dir.path().to_str().unwrap(),
+            "--format",
+            "human",
+        ])
         .assert()
         .success();
     assert!(dir.path().join("textkeel/SKILL.md").exists());

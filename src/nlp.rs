@@ -192,7 +192,10 @@ pub fn train_model(
     seed: u64,
 ) -> Result<TextKeelModel, String> {
     if docs.len() < 4 {
-        return Err(format!("need at least 4 labeled documents to train, got {}", docs.len()));
+        return Err(format!(
+            "need at least 4 labeled documents to train, got {}",
+            docs.len()
+        ));
     }
     if ngram_max == 0 {
         return Err("--ngrams must be >= 1".to_string());
@@ -343,7 +346,9 @@ pub fn train_model(
         let inv_n = 1.0 / n_train_f;
         let b1_corr = 1.0 - beta1.powi(step as i32);
         let b2_corr = 1.0 - beta2.powi(step as i32);
-        let lr_t = lr * (0.5 * (1.0 + (std::f64::consts::PI * (step as f64) / (n_ep as f64)).cos())).max(0.05);
+        let lr_t = lr
+            * (0.5 * (1.0 + (std::f64::consts::PI * (step as f64) / (n_ep as f64)).cos()))
+                .max(0.05);
 
         for c in 0..k {
             let g_b = gb[c] * inv_n;
@@ -466,8 +471,21 @@ pub fn train_model(
     }
 
     let mut hasher = Sha256::new();
-    hasher.update(format!("{}:{}:{}:{:.4}", classes.join(","), vocab.len(), n_train_f, eval.macro_f1).as_bytes());
-    let sha256: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
+    hasher.update(
+        format!(
+            "{}:{}:{}:{:.4}",
+            classes.join(","),
+            vocab.len(),
+            n_train_f,
+            eval.macro_f1
+        )
+        .as_bytes(),
+    );
+    let sha256: String = hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
 
     Ok(TextKeelModel {
         schema_version: 1,
@@ -490,8 +508,8 @@ impl TextKeelModel {
     pub fn from_file(path: &Path) -> Result<Self, String> {
         let raw = fs::read_to_string(path)
             .map_err(|e| format!("failed to read model {}: {e}", path.display()))?;
-        let model: Self =
-            serde_json::from_str(&raw).map_err(|e| format!("failed parsing textkeel model: {e}"))?;
+        let model: Self = serde_json::from_str(&raw)
+            .map_err(|e| format!("failed parsing textkeel model: {e}"))?;
         model.validate()?;
         Ok(model)
     }

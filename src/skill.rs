@@ -11,7 +11,7 @@ pub fn handle_skill(install_dir: Option<&Path>) -> Result<(), String> {
         let target_file = target_dir.join("SKILL.md");
         fs::write(&target_file, SKILL_MD)
             .map_err(|e| format!("failed to write {}: {e}", target_file.display()))?;
-        println!("Installed textkeel skill -> {}", target_file.display());
+        eprintln!("Installed textkeel skill -> {}", target_file.display());
     } else {
         print!("{SKILL_MD}");
     }

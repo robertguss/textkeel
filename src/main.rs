@@ -78,7 +78,16 @@ fn dispatch(cli: Cli) -> Result<u8, String> {
                     );
                 }
             }
-            let model = train_model(&docs, ngrams, max_features, min_df, test_split, epochs, l2, seed)?;
+            let model = train_model(
+                &docs,
+                ngrams,
+                max_features,
+                min_df,
+                test_split,
+                epochs,
+                l2,
+                seed,
+            )?;
             if min_macro_f1.is_some() && model.eval.is_in_sample {
                 return Err(
                     "--min-macro-f1 cannot pass on an in-sample fallback split (need >=2 rows in at least one class)"
@@ -92,12 +101,16 @@ fn dispatch(cli: Cli) -> Result<u8, String> {
             }
             fs::write(
                 &out,
-                serde_json::to_string_pretty(&model).map_err(|e| format!("serialize error: {e}"))?,
+                serde_json::to_string_pretty(&model)
+                    .map_err(|e| format!("serialize error: {e}"))?,
             )
             .map_err(|e| format!("failed writing {}: {e}", out.display()))?;
 
             if let Some(bp) = &export_browser {
-                let rendered = html::render_browser_playground(&model, "textkeel — Local Text Classifier Playground");
+                let rendered = html::render_browser_playground(
+                    &model,
+                    "textkeel — Local Text Classifier Playground",
+                );
                 if let Some(parent) = bp.parent()
                     && !parent.as_os_str().is_empty()
                 {
@@ -127,7 +140,9 @@ fn dispatch(cli: Cli) -> Result<u8, String> {
             });
 
             match format.resolve() {
-                ResolvedFormat::Json => println!("{}", serde_json::to_string_pretty(&summary).unwrap()),
+                ResolvedFormat::Json => {
+                    println!("{}", serde_json::to_string_pretty(&summary).unwrap())
+                }
                 ResolvedFormat::Agent => println!("{}", serde_json::to_string(&summary).unwrap()),
                 ResolvedFormat::Human => {
                     println!(
@@ -171,7 +186,9 @@ fn dispatch(cli: Cli) -> Result<u8, String> {
             let preds: Vec<Prediction> = if let Some(s) = text_str {
                 vec![model.predict(&s, None, top_phrases)]
             } else if let Some(inp) = input {
-                let col_name = text.ok_or_else(|| "--text <col> is required when classifying a file".to_string())?;
+                let col_name = text.ok_or_else(|| {
+                    "--text <col> is required when classifying a file".to_string()
+                })?;
                 let table = read_table(&inp)?;
                 let text_col = table
                     .columns
@@ -186,7 +203,10 @@ fn dispatch(cli: Cli) -> Result<u8, String> {
                     })
                     .collect()
             } else {
-                return Err("provide either --text-str \"...\" or an <input> file with --text <col>".to_string());
+                return Err(
+                    "provide either --text-str \"...\" or an <input> file with --text <col>"
+                        .to_string(),
+                );
             };
 
             let elapsed_us = t0.elapsed().as_micros();
@@ -195,8 +215,7 @@ fn dispatch(cli: Cli) -> Result<u8, String> {
                 if let Some(parent) = out_path.parent()
                     && !parent.as_os_str().is_empty()
                 {
-                    fs::create_dir_all(parent)
-                        .map_err(|e| format!("failed creating dir: {e}"))?;
+                    fs::create_dir_all(parent).map_err(|e| format!("failed creating dir: {e}"))?;
                 }
                 let is_csv = out_path
                     .extension()
@@ -233,7 +252,11 @@ fn dispatch(cli: Cli) -> Result<u8, String> {
                     fs::write(out_path, buf)
                         .map_err(|e| format!("failed writing {}: {e}", out_path.display()))?;
                 }
-                eprintln!("wrote {} classifications -> {}", preds.len(), out_path.display());
+                eprintln!(
+                    "wrote {} classifications -> {}",
+                    preds.len(),
+                    out_path.display()
+                );
             }
 
             let payload = serde_json::json!({
@@ -244,7 +267,9 @@ fn dispatch(cli: Cli) -> Result<u8, String> {
                 "predictions": preds,
             });
             match format.resolve() {
-                ResolvedFormat::Json => println!("{}", serde_json::to_string_pretty(&payload).unwrap()),
+                ResolvedFormat::Json => {
+                    println!("{}", serde_json::to_string_pretty(&payload).unwrap())
+                }
                 ResolvedFormat::Agent => println!("{}", serde_json::to_string(&payload).unwrap()),
                 ResolvedFormat::Human => {
                     println!(
@@ -275,7 +300,8 @@ fn dispatch(cli: Cli) -> Result<u8, String> {
         }
         Command::ExportBrowser { model, out, title } => {
             let m = TextKeelModel::from_file(&model)?;
-            let page_title = title.unwrap_or_else(|| "textkeel — Local Zero-PII Text Classifier".to_string());
+            let page_title =
+                title.unwrap_or_else(|| "textkeel — Local Zero-PII Text Classifier".to_string());
             let html_str = html::render_browser_playground(&m, &page_title);
             if let Some(parent) = out.parent()
                 && !parent.as_os_str().is_empty()
